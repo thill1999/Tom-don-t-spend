@@ -33,3 +33,15 @@ python3 -m http.server 8777 --bind 127.0.0.1 --directory ~/budget-app
 Then open http://127.0.0.1:8777 (the app) or http://127.0.0.1:8777/tests.html (the tests).
 
 Not financial advice: it's a planner. MoneyHelper is free and impartial for bigger decisions.
+
+## Put it on your iPhone
+
+1. **Publish (one time):** install GitHub Desktop, sign in, then File → Add Local Repository →
+   `~/budget-app` → **Publish repository**. Name it `tom-dont-spend` and untick "Keep this code
+   private" (the code is public; your numbers are not in it).
+2. **Turn on Pages:** on github.com open the repo → Settings → Pages → Branch: `main`, folder `/ (root)` → Save.
+   After a minute it's live at `https://<your-github-name>.github.io/tom-dont-spend/`.
+3. **Add to home screen:** open that link in **Safari** on the iPhone → Share → **Add to Home Screen**.
+4. **Load your numbers:** AirDrop `private/starter.json` to the phone (save to Files), open the app
+   from the home screen → **Import a backup** → pick the file.
+5. **Updates:** after a change, press **Push origin** in GitHub Desktop. The app updates next time you open it.
