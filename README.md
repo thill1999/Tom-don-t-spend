@@ -9,7 +9,10 @@ Your numbers are saved on the device only (browser storage); use **More → Expo
   checklist, countdowns, and total money (hidden until you tap).
 - **Plan:** a slider for each pot and for the weekly spender, with live "left over" and warnings
   when the weekly money gets too low. Lock the month in; add unexpected costs and the plan updates.
-- **Money:** accounts, monthly bills, debts (with a credit-use meter and upcoming payments).
+- **Money:** accounts, monthly bills, debts (with a credit-use meter and upcoming payments), and
+  **Import a statement**: a bank CSV logs this month's spends (pot moves and duplicates unticked) and updates the balance.
+- **Apple Pay auto-log:** an iPhone Shortcut writes each tap to `dont-spend-inbox.txt`; **Import Apple Pay taps**
+  on Home logs the new ones. Set-up steps are in the app under More.
 - **Subs:** subscription list with keep / review / cancel, a finder that spots repeat payments
   in a bank CSV export (read on the device, never uploaded), and a "where they hide" checklist.
 - **More:** pots (targets, goal dates), settings, backup.

@@ -192,3 +192,5 @@ table.map { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.map td { padding: 6px 4px; border-top: 1px solid var(--line); }
 table.map select { padding: 8px; }
 .card.colour input[type="range"], .card.ink input[type="range"] { background: transparent; }
+code { font: 13px/1.4 ui-monospace, Menlo, monospace; background: rgba(255, 255, 255, 0.5); border-radius: 6px; padding: 1px 5px; word-break: break-all; }
+ol li + li { margin-top: 6px; }

@@ -150,6 +150,51 @@
     eq(B.findRecurring(tx, '2026-10-01')[0].stillGoing, false);
   });
 
+  // ---------- importing spends ----------
+
+  test('category guesses', () => {
+    eq([B.guessCategory('TESCO STORES 2041'), B.guessCategory('The Crown Pub'), B.guessCategory('Discogs')], ['Food', 'Going out', 'Other']);
+  });
+  test('statement preview: only money out since payday, transfers and duplicates unticked', () => {
+    const tx = [
+      { date: '2026-10-20', desc: 'Tesco', amount: -10 },          // before payday: ignored
+      { date: '2026-10-29', desc: 'Tesco', amount: -23.5 },        // already logged by Apple Pay
+      { date: '2026-10-30', desc: 'To pot Records', amount: -75 }, // pot move
+      { date: '2026-10-31', desc: 'Greggs', amount: -3.2 },
+      { date: '2026-10-31', desc: 'Salary', amount: 2898 },        // money in: ignored
+    ];
+    const spends = [{ date: '2026-10-28', amount: 23.5, source: 'applepay' }];
+    const p = B.statementPreview(tx, spends, '2026-10-28');
+    eq(p.map((r) => [r.desc, r.include, r.duplicate, r.transfer, r.cat]), [
+      ['Greggs', true, false, false, 'Food'],
+      ['To pot Records', false, false, true, 'Other'],
+      ['Tesco', false, true, false, 'Food'],
+    ]);
+  });
+  test('latest balance from an oldest-first or newest-first file', () => {
+    const cols = { date: 0 };
+    const oldestFirst = [['2026-10-01', '100'], ['2026-10-02', '90'], ['2026-10-02', '80']];
+    eq(B.latestBalance(oldestFirst, cols, 1), { date: '2026-10-02', balance: 80 });
+    const newestFirst = [['02/10/2026', '80'], ['02/10/2026', '90'], ['01/10/2026', '100']];
+    eq(B.latestBalance(newestFirst, cols, 1), { date: '2026-10-02', balance: 80 });
+  });
+  test('Apple Pay inbox lines are read, junk ignored', () => {
+    const text = 'DS|2026-10-28T12:30:00+00:00|£12.50|Tesco|Revolut\nhello\nDS|2026-10-28T18:02:00+00:00|£3.00|Greggs|Revolut\n';
+    const taps = B.parseInbox(text);
+    eq(taps.map((t) => [t.date, t.amount, t.merchant, t.card]), [['2026-10-28', 12.5, 'Tesco', 'Revolut'], ['2026-10-28', 3, 'Greggs', 'Revolut']]);
+  });
+  test('Apple Pay inbox: re-importing the same file adds nothing; two equal coffees both count', () => {
+    const text = 'DS|2026-10-29T09:00:00Z|£3.00|Pret|R\nDS|2026-10-29T15:00:00Z|£3.00|Pret|R\n';
+    const first = B.inboxToAdd(B.parseInbox(text), [], '2026-10-28');
+    eq(first.fresh.length, 2);
+    const logged = first.fresh.map((t) => ({ date: t.date, amount: t.amount, key: t.key, source: 'applepay' }));
+    eq(B.inboxToAdd(B.parseInbox(text), logged, '2026-10-28'), { fresh: [], skipped: 2 });
+  });
+  test('Apple Pay tap already typed in by hand is skipped', () => {
+    const r = B.inboxToAdd(B.parseInbox('DS|2026-10-29T09:00:00Z|£4.20|Costa|R'), [{ date: '2026-10-29', amount: 4.2, source: 'manual' }], '2026-10-28');
+    eq([r.fresh.length, r.skipped], [0, 1]);
+  });
+
   const failed = results.filter((r) => !r.ok);
   document.getElementById('summary').innerHTML = failed.length
     ? `<span class="fail">${failed.length} failed</span> of ${results.length}`

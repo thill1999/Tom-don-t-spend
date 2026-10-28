@@ -207,7 +207,7 @@
   /** "£1,234.50", "-12.00", "(12.00)" → number; blank → null. */
   function parseMoney(s) {
     if (s == null) return null;
-    let t = String(s).trim().replace(/[£$€,\s]/g, '');
+    let t = String(s).trim().replace(/[£$€,\sA-Za-z]/g, '');
     if (!t) return null;
     let neg = false;
     if (/^\(.*\)$/.test(t)) { neg = true; t = t.slice(1, -1); }
@@ -316,11 +316,110 @@
     return found.sort((a, b) => b.monthly - a.monthly);
   }
 
+  // ---------- importing spends (statements and Apple Pay taps) ----------
+
+  const FOOD = /tesco|sainsbury|aldi|lidl|asda|co-?op|morrisons|m ?& ?s|marks|waitrose|iceland|greggs|pret|deliveroo|uber ?eats|just ?eat|mcdonald|kfc|nando|subway|domino|pizza|cafe|coffee|costa|starbucks|bakery/i;
+  const OUT = /pub|bar\b|club|tavern|\binn\b|brewdog|wetherspoon|ticket|dice|skiddle|cinema|odeon|vue\b|bowling/i;
+  const NOT_SPEND = /transfer|to pot|from pot|top.?up|exchange|pocket|vault|savings|standing order|salary|refund|moneybox|isa\b/i;
+
+  function guessCategory(desc) {
+    if (FOOD.test(desc)) return 'Food';
+    if (OUT.test(desc)) return 'Going out';
+    return 'Other';
+  }
+
+  /** Identity of a spend, so the same payment is never logged twice from the same source. */
+  function spendKey(date, amount, desc) {
+    return `${date}|${pennies(Math.abs(amount)).toFixed(2)}|${merchantKey(desc)}`;
+  }
+
+  /**
+   * True when a spend of the same amount is already logged within a day of `date`: catches the
+   * same purchase arriving twice (an Apple Pay tap, then the bank statement).
+   */
+  function alreadyLogged(spends, date, amount) {
+    const amt = pennies(Math.abs(amount));
+    return spends.some((s) => Math.abs(pennies(s.amount) - amt) < 0.005 && Math.abs(daysBetween(s.date, date)) <= 1);
+  }
+
+  /** Index of a running-balance column, or -1. */
+  function balanceColumn(headers) {
+    return headers.findIndex((h) => /balance/i.test(String(h)));
+  }
+
+  /**
+   * Statement rows → a preview of what would be logged. Only money going out since `since`
+   * (the start of this pay cycle). Transfers and pot moves start unticked, as do duplicates.
+   */
+  function statementPreview(transactions, spends, since) {
+    return transactions
+      .filter((t) => t.amount < 0 && t.date >= since)
+      .map((t) => {
+        const amount = pennies(-t.amount);
+        const duplicate = alreadyLogged(spends, t.date, amount);
+        const transfer = NOT_SPEND.test(t.desc);
+        return { date: t.date, desc: t.desc, amount, cat: guessCategory(t.desc), duplicate, transfer, include: !duplicate && !transfer };
+      })
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  /** The latest balance in a statement (rows can be newest-first or oldest-first). */
+  function latestBalance(rows, cols, balanceIdx) {
+    const parsed = rows
+      .map((r) => ({ date: parseDate(r[cols.date]), bal: parseMoney(r[balanceIdx]) }))
+      .filter((p) => p.date && p.bal != null);
+    if (!parsed.length) return null;
+    const newestFirst = parsed[0].date > parsed[parsed.length - 1].date;
+    const ordered = newestFirst ? parsed : [...parsed].reverse();
+    // `ordered` is newest-first; on a tie for the newest date, the first row wins
+    let best = ordered[0];
+    for (const p of ordered) if (p.date > best.date) best = p;
+    return { date: best.date, balance: pennies(best.bal) };
+  }
+
+  /**
+   * Lines the iPhone Shortcut writes after each Apple Pay tap:
+   *   DS|2026-10-28T12:30:00+00:00|£12.50|Tesco|Revolut
+   * Anything else in the text is ignored.
+   */
+  function parseInbox(text) {
+    const out = [];
+    for (const raw of String(text).split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line.startsWith('DS|')) continue;
+      const [, when, amt, merchant = '', card = ''] = line.split('|');
+      const date = parseDate(when);
+      const amount = parseMoney(amt);
+      if (!date || amount == null || amount === 0) continue;
+      const a = pennies(Math.abs(amount));
+      out.push({ date, amount: a, merchant: merchant.trim(), card: card.trim(), key: spendKey(date, a, merchant) + '|' + String(when).trim() });
+    }
+    return out;
+  }
+
+  /** Splits inbox taps into new ones and ones already logged (by key, or same amount and day). */
+  function inboxToAdd(taps, spends, since) {
+    const keys = new Set(spends.map((s) => s.key).filter(Boolean));
+    // Two real £3 coffees on one day are two taps, so taps are only checked against spends
+    // that came from somewhere else (typed in, or from a statement).
+    const others = spends.filter((s) => s.source !== 'applepay');
+    const fresh = [];
+    let skipped = 0;
+    for (const t of taps) {
+      if (t.date < since) continue;
+      if (keys.has(t.key) || alreadyLogged(others, t.date, t.amount)) { skipped++; continue; }
+      keys.add(t.key);
+      fresh.push(t);
+    }
+    return { fresh, skipped };
+  }
+
   root.Budget = {
     pennies, sum, money,
     toDate, ymd, addDays, daysBetween, weekday, todayLocal, paydayIn, cycleFor, topUpDates, currentWeek,
     debtPaymentsIn, planSummary, weekLeft,
     monthlyCost, subsTotals,
     parseCSV, parseMoney, parseDate, guessColumns, toTransactions, merchantKey, findRecurring,
+    guessCategory, spendKey, alreadyLogged, balanceColumn, statementPreview, latestBalance, parseInbox, inboxToAdd,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

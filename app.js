@@ -12,7 +12,7 @@
   function emptyState() {
     return {
       version: 1,
-      settings: { paydayDay: 28, payAmount: null, topUpWeekday: 1, minWeekly: 60, safetyFloor: null, floorAccount: null },
+      settings: { paydayDay: 28, payAmount: null, topUpWeekday: 1, minWeekly: 60, safetyFloor: null, floorAccount: null, spendAccount: null },
       accounts: [], bills: [], debts: [], pots: [], plans: {}, spends: [], subs: [], subHunt: {},
       balancesUpdated: null,
     };
@@ -32,7 +32,7 @@
   }
 
   let state = load();
-  const ui = { tab: 'home', cat: 'Food', showTotals: false, csv: null, found: null, starter: null };
+  const ui = { tab: 'home', cat: 'Food', showTotals: false, csv: null, found: null, starter: null, stmt: null, stmtAccount: null };
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -201,6 +201,11 @@
         </div>
         <div class="chips">${CATS.map((c2) => `<button class="chip ${ui.cat === c2 ? 'on' : ''}" data-action="cat" data-cat="${c2}">${c2}</button>`).join('')}</div>
         <input id="qa-note" type="text" placeholder="What was it? (optional)">
+        <div class="row">
+          <label class="btn soft grow" style="text-align:center">Import Apple Pay taps<input type="file" accept=".txt,text/plain" data-action="inbox-file" hidden></label>
+          <button class="soft" data-action="inbox-paste">Paste</button>
+        </div>
+        ${state.inboxLast ? `<p class="label">Apple Pay taps last imported ${fmtDate(state.inboxLast)}. Set-up is in More.</p>` : '<p class="label">Want taps logged automatically? Set-up is in More.</p>'}
         ${weekSpends.length ? `<div class="list">${weekSpends.map((x) => `
           <div class="item row">${monogram(x.note || x.cat)}<div class="grow">${esc(x.note || x.cat)}<br><span class="label">${esc(x.cat)} · ${fmtDate(x.date)}</span></div>
           <span class="card-amount">−${money(x.amount)}</span><button class="ghost" data-action="del-spend" data-id="${x.id}" aria-label="Delete">✕</button></div>`).join('')}</div>` : '<p class="label">Nothing logged this week yet.</p>'}
@@ -398,6 +403,53 @@
 
   // ---------- Money ----------
 
+  // ---------- statement import ----------
+
+  function rebuildStatement() {
+    const st = ui.stmt;
+    const tx = B.toTransactions(st.rows, st.cols);
+    st.preview = B.statementPreview(tx, state.spends, cycle().start);
+    st.notSpendAccount = ui.stmtAccount !== state.settings.spendAccount;
+    if (st.notSpendAccount) st.preview.forEach((r) => { r.include = false; });
+    st.latest = st.cols.balance >= 0 ? B.latestBalance(st.rows, st.cols, st.cols.balance) : null;
+  }
+
+  function viewStatement() {
+    if (!state.accounts.length) return '';
+    if (!ui.stmtAccount) ui.stmtAccount = state.settings.spendAccount || state.accounts[0].id;
+    let html = `
+      <div class="card stack">
+        <h2>Import a statement</h2>
+        <p class="label">Export a CSV from your banking app and pick it here. It logs this month's spending and can update the balance. The file is read on this phone only.</p>
+        <label class="field">Which account is it?
+          <select id="stmt-account">${state.accounts.map((a) => `<option value="${a.id}" ${ui.stmtAccount === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+        <label class="btn soft full" style="display:block;text-align:center">Choose CSV file<input type="file" accept=".csv,text/csv" data-action="stmt-file" hidden></label>`;
+    const st = ui.stmt;
+    if (st) {
+      const pick = (field, allowNone) => `<select data-stmt="${field}">${allowNone ? `<option value="-1" ${st.cols[field] < 0 ? 'selected' : ''}>none</option>` : ''}${st.headers.map((h, i) => `<option value="${i}" ${st.cols[field] === i ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select>`;
+      const ticked = st.preview.filter((r) => r.include).length;
+      html += `
+        <table class="map">
+          <tr><td>Date</td><td>${pick('date')}</td></tr>
+          <tr><td>Description</td><td>${pick('desc')}</td></tr>
+          <tr><td>Amount</td><td>${pick('amount')}</td></tr>
+          <tr><td>Balance</td><td>${pick('balance', true)}</td></tr>
+        </table>
+        <label class="row small"><input type="checkbox" data-stmt="outPositive" ${st.cols.outPositive ? 'checked' : ''}> This column only has money going out (no minus signs)</label>
+        ${st.notSpendAccount ? flagHtml('warn', "This isn't your weekly spender account, so nothing is ticked. Only tick everyday spends, not bills or pot moves.") : ''}
+        ${st.preview.length ? `
+          <p class="small"><b>${ticked}</b> of ${st.preview.length} payments since payday (${fmtDate(cycle().start)}) will be logged. Pot moves and ones already logged start unticked.</p>
+          <div class="list">${st.preview.map((r, i) => `
+            <label class="item row"><input type="checkbox" data-stmt-row="${i}" ${r.include ? 'checked' : ''}>
+              <span class="grow">${esc(r.desc)}<br><span class="label">${fmtDate(r.date)} · ${r.cat}${r.duplicate ? ' · already logged' : ''}${r.transfer ? ' · looks like a transfer' : ''}</span></span>
+              <span class="card-amount">−${money(r.amount)}</span></label>`).join('')}</div>`
+          : '<p class="muted">No money going out since payday in this file. Check the columns above.</p>'}
+        ${st.latest ? `<label class="row small"><input type="checkbox" id="stmt-bal" checked> Set the balance to <b>${money(st.latest.balance)}</b> (from ${fmtDate(st.latest.date)})</label>` : ''}
+        <div class="row"><button class="grow" data-action="stmt-import">Import</button><button class="soft" data-action="stmt-cancel">Cancel</button></div>`;
+    }
+    return html + '</div>';
+  }
+
   function viewMoney() {
     const accounts = state.accounts.map((a, i) => `
       <div class="item stack">
@@ -450,6 +502,7 @@
         <p class="muted small">Update these whenever you check your banking apps.${state.balancesUpdated ? ` Last updated ${fmtDate(state.balancesUpdated)}.` : ''}</p>
         <div class="list">${accounts || '<p class="muted">No accounts yet.</p>'}</div>
       </div>
+      ${viewStatement()}
       <div class="card">
         <div class="row between"><h2>Monthly bills</h2><b class="num">${money(B.sum(state.bills, (b) => b.amount))}</b></div>
         <div class="list">${bills || '<p class="muted">No bills yet.</p>'}</div>
@@ -566,6 +619,22 @@
           <label class="field grow">Safety floor ${editInput('settings.safetyFloor', st.safetyFloor, 'num', 'placeholder="e.g. 300"')}</label>
           <label class="field grow">For account <select data-edit="settings.floorAccount" data-type="text"><option value="">none</option>${state.accounts.map((a) => `<option value="${a.id}" ${st.floorAccount === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
         </div>
+        <label class="field">Weekly spender account (statements from this one are ticked by default)
+          <select data-edit="settings.spendAccount" data-type="text"><option value="">none</option>${state.accounts.map((a) => `<option value="${a.id}" ${st.spendAccount === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+      </div>
+      <div class="card colour stack" style="background:var(--c1)">
+        <h2>Apple Pay auto-log</h2>
+        <p>Each time you tap your card with Apple Pay, an iPhone Shortcut quietly writes it to a small file. Tap <b>Import Apple Pay taps</b> on Home and pick that file, and every new tap gets logged. Importing the same file again never counts anything twice.</p>
+        <p class="label">One-time set-up, about 3 minutes. Menu names can differ a little between iOS versions.</p>
+        <ol style="padding-left:20px;margin:0">
+          <li>Open <b>Shortcuts</b> → <b>Automation</b> → <b>+</b> → <b>Transaction</b>.</li>
+          <li>Pick your <b>Revolut</b> card (your weekly spender), choose <b>Run Immediately</b>, then <b>Next</b> → <b>New Blank Automation</b>.</li>
+          <li>Add <b>Format Date</b>: Current Date, Date Format <b>Custom</b>: <code>yyyy-MM-dd HH:mm</code></li>
+          <li>Add <b>Text</b> and build this line, tapping each [bit] in as a variable:<br><code>DS|[Formatted Date]|[Shortcut Input → Amount]|[Shortcut Input → Merchant]|[Shortcut Input → Card]</code></li>
+          <li>Add <b>Append to Text File</b>: append the Text to <code>dont-spend-inbox.txt</code> in iCloud Drive / Shortcuts, with <b>Make New Line</b> on.</li>
+          <li>Pay for something small with Apple Pay, then import the file on Home to check it worked.</li>
+        </ol>
+        <p class="label">It only sees Apple Pay taps, not online card payments or direct debits. Import a statement on the Money tab once a week to catch the rest. Anything already logged from a tap won't be counted again.</p>
       </div>
       <div class="card stack">
         <h2>Backup</h2>
@@ -640,6 +709,19 @@
     input.value = '';
   }
 
+  /** Logs new Apple Pay taps from the Shortcut's inbox text (see More → Apple Pay auto-log). */
+  function importInbox(text) {
+    const taps = B.parseInbox(text);
+    if (!taps.length) { toast('No Apple Pay taps found in that.'); return; }
+    const { fresh, skipped } = B.inboxToAdd(taps, state.spends, cycle().start);
+    for (const t of fresh) {
+      state.spends.push({ id: uid(), date: t.date, amount: t.amount, cat: B.guessCategory(t.merchant), note: t.merchant, source: 'applepay', key: t.key });
+    }
+    state.inboxLast = today();
+    save(); render();
+    toast(`${fresh.length} new tap${fresh.length === 1 ? '' : 's'} logged${skipped ? `, ${skipped} already in` : ''}`);
+  }
+
   const actions = {
     go(el) { ui.tab = el.dataset.to; render(); window.scrollTo(0, 0); },
     cat(el) { ui.cat = el.dataset.cat; document.querySelectorAll('[data-action="cat"]').forEach((b) => b.classList.toggle('on', b.dataset.cat === ui.cat)); },
@@ -647,7 +729,7 @@
       const amt = B.pennies(document.getElementById('qa-amount').value);
       if (!(amt > 0)) { toast('Type an amount first.'); return; }
       const note = document.getElementById('qa-note').value.trim();
-      state.spends.push({ id: uid(), date: today(), amount: amt, cat: ui.cat, note });
+      state.spends.push({ id: uid(), date: today(), amount: amt, cat: ui.cat, note, source: 'manual' });
       save(); render(); toast(`Logged ${money(amt)}`);
     },
     'del-spend'(el) { state.spends = state.spends.filter((x) => x.id !== el.dataset.id); save(); render(); },
@@ -693,6 +775,28 @@
     'add-sub'() { state.subs.push({ id: uid(), name: 'New subscription', amount: 0, freq: 'monthly', verdict: 'review', from: 'manual' }); save(); render(); },
     verdict(el) { state.subs[Number(el.dataset.i)].verdict = el.dataset.v; save(); render(); },
     hunt(el) { state.subHunt[el.dataset.key] = el.checked; save(); },
+    'inbox-paste'() {
+      if (!navigator.clipboard || !navigator.clipboard.readText) { toast('Paste isn\'t available here. Use the file button.'); return; }
+      navigator.clipboard.readText().then(importInbox, () => toast('Couldn\'t read the clipboard. Use the file button.'));
+    },
+    'stmt-import'() {
+      const st = ui.stmt;
+      let n = 0;
+      for (const r of st.preview) {
+        if (!r.include) continue;
+        state.spends.push({ id: uid(), date: r.date, amount: r.amount, cat: r.cat, note: r.desc, source: 'statement', key: B.spendKey(r.date, r.amount, r.desc) });
+        n++;
+      }
+      const bal = document.getElementById('stmt-bal');
+      if (st.latest && bal && bal.checked) {
+        const acct = state.accounts.find((a) => a.id === ui.stmtAccount);
+        if (acct) { acct.balance = st.latest.balance; state.balancesUpdated = today(); }
+      }
+      ui.stmt = null;
+      save(); render();
+      toast(`${n} spend${n === 1 ? '' : 's'} logged${bal && bal.checked ? ', balance updated' : ''}`);
+    },
+    'stmt-cancel'() { ui.stmt = null; render(); },
     'find-subs'() {
       const { rows, cols } = ui.csv;
       const tx = B.toTransactions(rows, cols);
@@ -753,8 +857,28 @@
       ui.found = null;
       return;
     }
+    if (el.dataset.stmt) {
+      ui.stmt.cols[el.dataset.stmt] = el.type === 'checkbox' ? el.checked : Number(el.value);
+      rebuildStatement(); render();
+      return;
+    }
+    if (el.dataset.stmtRow) { ui.stmt.preview[Number(el.dataset.stmtRow)].include = el.checked; return; }
+    if (el.id === 'stmt-account') { ui.stmtAccount = el.value; if (ui.stmt) { rebuildStatement(); render(); } return; }
     const action = el.dataset.action;
     if (action === 'tick' || action === 'hunt') { actions[action](el); return; }
+    if (action === 'inbox-file') readFile(el, importInbox);
+    if (action === 'stmt-file') {
+      readFile(el, (text) => {
+        const rows = B.parseCSV(text);
+        if (rows.length < 2) { toast('That CSV looks empty.'); return; }
+        const headers = rows[0];
+        const cols = B.guessColumns(headers);
+        for (const k of ['date', 'desc', 'amount']) if (cols[k] < 0) cols[k] = 0;
+        cols.balance = B.balanceColumn(headers);
+        ui.stmt = { headers, rows: rows.slice(1), cols };
+        rebuildStatement(); render();
+      });
+    }
     if (action === 'import') {
       readFile(el, (text) => { try { importState(JSON.parse(text)); } catch (err) { toast('Couldn\'t read that file.'); } });
     }
