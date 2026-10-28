@@ -1,0 +1,5 @@
+# Your real numbers never go in git
+private/
+*.json.bak
+pots-backup-*.json
+.DS_Store

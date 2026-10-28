@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pots",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8777", "--bind", "127.0.0.1", "--directory", "/Users/user/budget-app"],
+      "port": 8777
+    }
+  ]
+}

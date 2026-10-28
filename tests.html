@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budget Tests</title>
+<style>
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  .pass { color: #0a7a3d; } .fail { color: #b3261e; font-weight: 600; }
+  h1 { font-size: 20px; }
+</style>
+</head>
+<body>
+<h1>Money maths tests</h1>
+<p id="summary">Running…</p>
+<ol id="out"></ol>
+<script src="logic.js"></script>
+<script>
+  const B = window.Budget;
+  const results = [];
+  function test(name, fn) {
+    try { fn(); results.push({ name, ok: true }); }
+    catch (e) { results.push({ name, ok: false, err: e.message }); }
+  }
+  function eq(a, b) {
+    const sa = JSON.stringify(a), sb = JSON.stringify(b);
+    if (sa !== sb) throw new Error(`expected ${sb}, got ${sa}`);
+  }
+
+  // A plan that mirrors the October example: £2,716 in, Flex and PayPal due in November.
+  const state = {
+    settings: { topUpWeekday: 1, minWeekly: 70 },
+    bills: [{ amount: 500 }, { amount: 60 }, { amount: 118 }, { amount: 50 }],
+    debts: [
+      { name: 'Flex', payments: [{ date: '2026-11-02', amount: 247 }] },
+      { name: 'PayPal', payments: [{ date: '2026-11-15', amount: 225 }, { date: '2026-12-15', amount: 101 }] },
+    ],
+  };
+  const plan = { startTotal: 2716, weekly: 120, pots: { a: 250, b: 250, c: 150, d: 75, e: 75, f: 100 }, adjustments: [] };
+
+  test('pennies stop float drift', () => eq(B.pennies(0.1 + 0.2), 0.3));
+  test('money format', () => { eq(B.money(1234), '£1,234'); eq(B.money(-12.5), '−£12.50'); });
+
+  test('cycle on payday', () => eq(B.cycleFor('2026-10-28', 28), { start: '2026-10-28', end: '2026-11-28' }));
+  test('cycle before payday uses last month', () => eq(B.cycleFor('2026-11-10', 28), { start: '2026-10-28', end: '2026-11-28' }));
+  test('cycle across new year', () => eq(B.cycleFor('2027-01-05', 28), { start: '2026-12-28', end: '2027-01-28' }));
+  test('payday 31 in a 30-day month', () => eq(B.paydayIn(2026, 11, 31), '2026-11-30'));
+  test('payday 31 in February', () => eq(B.paydayIn(2027, 2, 31), '2027-02-28'));
+
+  test('top-ups: payday (Wed) + 4 Mondays = 5', () => {
+    eq(B.topUpDates({ start: '2026-10-28', end: '2026-11-28' }, 1),
+      ['2026-10-28', '2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23']);
+  });
+  test('top-ups: payday on a Monday counts once', () => {
+    eq(B.topUpDates({ start: '2026-12-28', end: '2027-01-28' }, 1),
+      ['2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25']);
+  });
+  test('current week runs to the next top-up', () => {
+    const dates = B.topUpDates({ start: '2026-10-28', end: '2026-11-28' }, 1);
+    eq(B.currentWeek('2026-11-04', dates, '2026-11-28').start, '2026-11-02');
+    eq(B.currentWeek('2026-11-04', dates, '2026-11-28').end, '2026-11-09');
+    eq(B.currentWeek('2026-11-25', dates, '2026-11-28').end, '2026-11-28');
+  });
+
+  test('October plan leaves £16', () => {
+    const s = B.planSummary(state, plan, { start: '2026-10-28', end: '2026-11-28' });
+    eq([s.fixed, s.weeklyTotal, s.potsTotal, s.left], [1200, 600, 900, 16]);
+    eq(s.flags, []);
+  });
+  test('debt payments outside the cycle are ignored', () => {
+    const s = B.planSummary(state, plan, { start: '2026-11-28', end: '2026-12-28' });
+    eq(s.debts, 101);
+  });
+  test('an unexpected cost lowers the total and can flag over-allocation', () => {
+    const p = { ...plan, adjustments: [{ amount: -40 }] };
+    const s = B.planSummary(state, p, { start: '2026-10-28', end: '2026-11-28' });
+    eq([s.total, s.left], [2676, -24]);
+    eq(s.flags, ['over']);
+  });
+  test('weekly under the minimum is flagged', () => {
+    const s = B.planSummary(state, { ...plan, weekly: 50 }, { start: '2026-10-28', end: '2026-11-28' });
+    eq(s.flags.includes('weeklyLow'), true);
+  });
+  test('pots squeezing the weekly money are flagged', () => {
+    const p = { ...plan, pots: { a: 1300 } };
+    const s = B.planSummary(state, p, { start: '2026-10-28', end: '2026-11-28' });
+    eq(s.maxWeekly, 43);
+    eq(s.flags.includes('weeklySqueezed'), true);
+  });
+
+  test('week left counts only this week', () => {
+    const spends = [{ date: '2026-11-01', amount: 30 }, { date: '2026-11-03', amount: 12.5 }, { date: '2026-11-08', amount: 7.5 }, { date: '2026-11-09', amount: 99 }];
+    eq(B.weekLeft(120, spends, { start: '2026-11-02', end: '2026-11-09' }), { spent: 20, left: 100, days: 7 });
+  });
+
+  test('subscription totals and savings', () => {
+    const t = B.subsTotals([
+      { amount: 12, freq: 'monthly', verdict: 'keep' },
+      { amount: 120, freq: 'yearly', verdict: 'cancel' },
+      { amount: 3, freq: 'weekly', verdict: 'review' },
+    ]);
+    eq(t, { perMonth: 35, perYear: 420, savePerYear: 120 });
+  });
+
+  test('CSV with quotes and commas', () => {
+    eq(B.parseCSV('Date,Desc,Amount\n2026-10-01,"Shop, London",-5.00\r\n'),
+      [['Date', 'Desc', 'Amount'], ['2026-10-01', 'Shop, London', '-5.00']]);
+  });
+  test('money parsing', () => {
+    eq(B.parseMoney('£1,234.50'), 1234.5); eq(B.parseMoney('(12.00)'), -12); eq(B.parseMoney(''), null);
+  });
+  test('date parsing', () => {
+    eq(B.parseDate('2026-10-02 14:03:11'), '2026-10-02');
+    eq(B.parseDate('02/10/2026'), '2026-10-02');
+    eq(B.parseDate('2/10/26'), '2026-10-02');
+    eq(B.parseDate('2 Oct 2026'), '2026-10-02');
+    eq(B.parseDate('nonsense'), null);
+  });
+  test('column guess: single signed amount column', () => {
+    eq(B.guessColumns(['Type', 'Started Date', 'Description', 'Amount', 'Balance']), { date: 1, desc: 2, amount: 3, outPositive: false });
+  });
+  test('column guess: separate money-out column', () => {
+    eq(B.guessColumns(['Transaction Date', 'Transaction Description', 'Debit Amount', 'Credit Amount']), { date: 0, desc: 1, amount: 2, outPositive: true });
+  });
+  test('merchant key drops card noise and references', () => {
+    eq(B.merchantKey('CARD PAYMENT TO SPOTIFY P2C3A1 ON 02/10'), 'spotify');
+    eq(B.merchantKey('Netflix.com'), 'netflix');
+  });
+
+  test('finds monthly and yearly subs, skips one-offs and wobbly amounts', () => {
+    const tx = [
+      { date: '2026-07-03', desc: 'SPOTIFY P1', amount: -11.99 },
+      { date: '2026-08-03', desc: 'SPOTIFY P2', amount: -11.99 },
+      { date: '2026-09-03', desc: 'SPOTIFY P3', amount: -11.99 },
+      { date: '2025-09-20', desc: 'Some App Yearly', amount: -29.99 },
+      { date: '2026-09-21', desc: 'Some App Yearly', amount: -29.99 },
+      { date: '2026-08-10', desc: 'Tesco', amount: -5 },
+      { date: '2026-09-10', desc: 'Tesco', amount: -64 },
+      { date: '2026-09-12', desc: 'Record Shop', amount: -24 },
+      { date: '2026-09-28', desc: 'Salary', amount: 2898 },
+    ];
+    const found = B.findRecurring(tx, '2026-10-01');
+    eq(found.map((f) => [f.key, f.freq, f.stillGoing]), [['spotify', 'monthly', true], ['some app', 'yearly', true]]);
+  });
+  test('a sub that stopped is marked as not still going', () => {
+    const tx = [
+      { date: '2026-03-01', desc: 'GYM', amount: -30 },
+      { date: '2026-04-01', desc: 'GYM', amount: -30 },
+    ];
+    eq(B.findRecurring(tx, '2026-10-01')[0].stillGoing, false);
+  });
+
+  const failed = results.filter((r) => !r.ok);
+  document.getElementById('summary').innerHTML = failed.length
+    ? `<span class="fail">${failed.length} failed</span> of ${results.length}`
+    : `<span class="pass">All ${results.length} passed</span>`;
+  document.getElementById('out').innerHTML = results
+    .map((r) => `<li class="${r.ok ? 'pass' : 'fail'}">${r.name}${r.ok ? '' : ' — ' + r.err}</li>`).join('');
+  window.testResults = { passed: results.length - failed.length, failed };
+</script>
+</body>
+</html>
