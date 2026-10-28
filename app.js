@@ -1,4 +1,4 @@
-// Screens for the budget app. All the money maths lives in logic.js (window.Budget).
+// Screens for Tom Don't Spend. All the money maths lives in logic.js (window.Budget).
 // Everything is saved on this phone only (localStorage); use More → Backup to keep a copy.
 (function () {
   'use strict';
@@ -112,13 +112,40 @@
 
   function flagHtml(cls, html) { return `<div class="flag ${cls}">${html}</div>`; }
 
+  const COLOURS = ['--c1', '--c2', '--c3', '--c4', '--c5', '--c6', '--c7', '--c8'];
+  const colour = (i) => `var(${COLOURS[i % COLOURS.length]})`;
+  const monogram = (name) => `<span class="monogram">${esc((String(name || '?').trim()[0] || '?').toUpperCase())}</span>`;
+
+  /** £96.50 with the pennies greyed, like the reference's $98,123.30. */
+  function bigMoney(x) {
+    const s = money(x);
+    const m = s.match(/^(.*?)(\.\d\d)$/);
+    return m ? `${esc(m[1])}<span class="pence">${m[2]}</span>` : esc(s);
+  }
+
+  /** Thick ring: bright = still to spend, deep = spent. All ink when you're over. */
+  function ring(spentFraction, over) {
+    const r = 70;
+    const c = 2 * Math.PI * r;
+    const spent = Math.max(0, Math.min(1, spentFraction)) * c;
+    return `
+      <svg class="ring" viewBox="0 0 200 200" role="img" aria-label="${Math.round(Math.min(1, spentFraction) * 100)}% of this week's money spent">
+        <circle cx="100" cy="100" r="${r}" fill="none" stroke="${over ? 'var(--ink)' : 'var(--brand)'}" stroke-width="52"/>
+        <circle cx="100" cy="100" r="${r}" fill="none" stroke="var(--brand-deep)" stroke-width="52"
+          stroke-dasharray="${spent} ${c}" transform="rotate(-90 100 100)" ${over ? 'opacity="0"' : ''}/>
+      </svg>`;
+  }
+
   // ---------- Home ----------
 
   function viewWelcome() {
     return `
-      <h1>Hey 👋</h1>
+      <section class="hero">
+        <h1 style="font-size:52px">Tom<br>Don't<br>Spend</h1>
+        ${ring(0.3, false)}
+      </section>
       <div class="card stack">
-        <p>This is your money planner. Everything stays on this phone.</p>
+        <p>Your money planner. Everything stays on this phone.</p>
         ${ui.starter ? '<button class="full" data-action="load-starter">Load my starter numbers</button>' : ''}
         <label class="btn soft full" style="display:block;text-align:center">Import a backup<input type="file" accept=".json,application/json" data-action="import" hidden></label>
         <button class="ghost full" data-action="go" data-to="money">Start from scratch</button>
@@ -134,12 +161,9 @@
     const week = B.currentWeek(t, s.dates, c.end);
     const wl = B.weekLeft(plan.weekly, state.spends, week);
     const daysToTopUp = Math.max(1, B.daysBetween(t, week.end));
-    const ratio = plan.weekly ? wl.left / plan.weekly : 0;
-    const cls = wl.left < 0 ? 'bad' : ratio < 0.25 ? 'bad' : ratio < 0.5 ? 'warn' : 'good';
+    const spentFraction = plan.weekly ? wl.spent / plan.weekly : 1;
     const nextIsPayday = week.end === c.end;
     const parts = [];
-
-    parts.push(`<h1>Left this week</h1>`);
 
     const flags = [];
     const sincePay = B.daysBetween(c.start, t);
@@ -155,12 +179,16 @@
     }
 
     parts.push(`
-      <div class="card">
-        <div class="big num ${cls}">${money(wl.left)}</div>
-        <p class="muted">${money(wl.spent)} spent of ${money(plan.weekly)} · ${nextIsPayday ? 'payday' : 'tops up'} ${fmtDate(week.end)} (${daysToTopUp} day${daysToTopUp === 1 ? '' : 's'})</p>
-        ${bar(plan.weekly ? wl.spent / plan.weekly : 0, cls)}
-        <p class="small muted" style="margin-top:8px">${wl.left > 0 ? `About ${money(B.pennies(wl.left / daysToTopUp))} a day until then.` : wl.left < 0 ? `You're ${money(-wl.left)} over. It comes out of next week unless you top up from a pot.` : 'All spent. Next top-up soon.'}</p>
-      </div>`);
+      <section class="hero">
+        <div class="hero-head"><h1>Left this<br>week</h1>
+          <span class="label" style="text-align:right">${nextIsPayday ? 'payday' : 'tops up'}<br><b>${fmtDate(week.end)}</b></span></div>
+        ${ring(spentFraction, wl.left < 0)}
+        <div class="hero-num">
+          <span class="label">${money(wl.spent)} spent<br>of ${money(plan.weekly)}</span>
+          <span class="huge ${wl.left < 0 ? 'bad' : ''}">${bigMoney(wl.left)}</span>
+        </div>
+        <p class="label" style="text-align:right;margin-top:6px">${wl.left > 0 ? `about ${money(B.pennies(wl.left / daysToTopUp))} a day for ${daysToTopUp} day${daysToTopUp === 1 ? '' : 's'}` : wl.left < 0 ? `${money(-wl.left)} over: it comes out of next week` : 'all spent, top-up soon'}</p>
+      </section>`);
     parts.push(flags.join(''));
 
     const weekSpends = state.spends.filter((x) => x.date >= week.start && x.date < week.end).sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -168,14 +196,14 @@
       <div class="card stack">
         <h2>Spent something?</h2>
         <div class="row">
-          <input id="qa-amount" class="grow" type="number" inputmode="decimal" step="0.01" placeholder="£ amount">
-          <button data-action="add-spend">Add</button>
+          <input id="qa-amount" class="grow qa-amount" type="number" inputmode="decimal" step="0.01" placeholder="£0">
+          <button class="circle" data-action="add-spend">Add</button>
         </div>
         <div class="chips">${CATS.map((c2) => `<button class="chip ${ui.cat === c2 ? 'on' : ''}" data-action="cat" data-cat="${c2}">${c2}</button>`).join('')}</div>
         <input id="qa-note" type="text" placeholder="What was it? (optional)">
         ${weekSpends.length ? `<div class="list">${weekSpends.map((x) => `
-          <div class="item row"><div class="grow">${esc(x.note || x.cat)} <span class="muted small">· ${fmtDate(x.date)}</span></div>
-          <b class="num">${money(x.amount)}</b><button class="ghost" data-action="del-spend" data-id="${x.id}" aria-label="Delete">✕</button></div>`).join('')}</div>` : '<p class="muted small">Nothing logged this week yet.</p>'}
+          <div class="item row">${monogram(x.note || x.cat)}<div class="grow">${esc(x.note || x.cat)}<br><span class="label">${esc(x.cat)} · ${fmtDate(x.date)}</span></div>
+          <span class="card-amount">−${money(x.amount)}</span><button class="ghost" data-action="del-spend" data-id="${x.id}" aria-label="Delete">✕</button></div>`).join('')}</div>` : '<p class="label">Nothing logged this week yet.</p>'}
       </div>`);
 
     if (plan.locked) {
@@ -183,7 +211,7 @@
       const done = items.filter((i) => plan.checklist[i.key]).length;
       if (done < items.length) {
         parts.push(`
-          <div class="card">
+          <div class="card colour" style="background:var(--c3)">
             <div class="row between"><h2>Payday checklist</h2><span class="muted small">${done} of ${items.length}</span></div>
             <div class="list">${items.map((i) => `
               <label class="item row"><input type="checkbox" data-action="tick" data-key="${esc(i.key)}" ${plan.checklist[i.key] ? 'checked' : ''}><span class="grow">${esc(i.text)}</span></label>`).join('')}</div>
@@ -203,7 +231,7 @@
       const f = (Number(pot.saved) || 0) / Number(pot.target);
       cd.push(`<div class="item"><div class="row between"><span>${esc(pot.name)}</span><b class="num">${money(pot.saved || 0)} / ${money(pot.target)}</b></div>${bar(f, f >= 1 ? 'good' : '')}${pot.deadline ? `<p class="muted small" style="margin-top:4px">by ${fmtDate(pot.deadline)}</p>` : ''}</div>`);
     }
-    parts.push(`<div class="card"><h2>Countdowns</h2><div class="list">${cd.join('')}</div></div>`);
+    parts.push(`<div class="card ink"><h2>Countdowns</h2><div class="list">${cd.join('')}</div></div>`);
 
     // Totals stay blurred until tapped: seeing the big number is the trigger.
     const sumKind = (...kinds) => B.sum(state.accounts.filter((a) => kinds.includes(a.kind)), (a) => a.balance);
@@ -259,12 +287,13 @@
     return hint;
   }
 
-  function slider(id, label, value, max, hint, locked) {
+  /** One slider card. `cardClass`/`bg` give it the ink or colourful look. */
+  function slider(id, label, value, max, hint, locked, cardClass, bg) {
     return `
-      <div class="slider">
-        <div class="row between"><span>${esc(label)}</span><span class="amount num" id="lbl-${id}">${money(value)}</span></div>
+      <div class="card ${cardClass}"${bg ? ` style="background:${bg}"` : ''}>
+        <div class="row between"><span class="card-title">${esc(label)}</span><span class="card-amount" id="lbl-${id}">${money(value)}</span></div>
         <input type="range" min="0" max="${max}" step="5" value="${value}" data-slider="${id}" ${locked ? 'disabled' : ''} aria-label="${esc(label)}">
-        ${hint ? `<p class="muted small" id="hint-${id}">${hint}</p>` : ''}
+        <p class="label" id="hint-${id}">${hint || ''}</p>
       </div>`;
   }
 
@@ -284,7 +313,7 @@
     const s = B.planSummary(state, plan, c);
     const locked = plan.locked;
     const parts = [];
-    parts.push(`<h1>This month's plan</h1><p class="muted">${fmtDate(c.start)} to ${fmtDate(B.addDays(c.end, -1))} · your weekly money tops up ${s.drops} times</p>`);
+    parts.push(`<h1>This month's<br>plan</h1><p class="label">${fmtDate(c.start)} to ${fmtDate(B.addDays(c.end, -1))} · weekly money tops up ${s.drops} times</p>`);
     if (locked) {
       parts.push(flagHtml('good', `<b>Locked in on ${fmtDate(plan.lockedAt)}.</b> The sliders are frozen. If something unexpected comes out, add it below and the plan updates. <button class="ghost" data-action="unlock">Unlock</button>`));
     }
@@ -315,12 +344,13 @@
         <button class="ghost" data-action="go" data-to="money">Edit bills and debts →</button>
       </div>`);
 
-    parts.push(`<div class="card"><h2>Weekly spender</h2>
-      ${slider('weekly', 'Every ' + DAYS[state.settings.topUpWeekday], plan.weekly, 300, weeklyHint(s), locked)}</div>`);
+    parts.push(`<h2 style="margin-top:18px">Weekly spender</h2>
+      ${slider('weekly', 'Every ' + DAYS[state.settings.topUpWeekday], plan.weekly, 300, weeklyHint(s), locked, 'ink')}`);
 
-    parts.push(`<div class="card"><h2>Pots</h2>
-      ${state.pots.length ? state.pots.map((p) => slider('pot-' + p.id, p.name, Number(plan.pots[p.id]) || 0, Math.max(1000, Number(plan.pots[p.id]) || 0), potHint(p), locked)).join('') : '<p class="muted">No pots yet. Add them in More.</p>'}
-    </div>`);
+    parts.push(`<h2 style="margin-top:18px">Pots</h2>
+      ${state.pots.length
+        ? `<div class="stackcards">${state.pots.map((p, i) => slider('pot-' + p.id, p.name, Number(plan.pots[p.id]) || 0, Math.max(1000, Number(plan.pots[p.id]) || 0), potHint(p), locked, 'colour', colour(i))).join('')}</div>`
+        : '<p class="muted">No pots yet. Add them in More.</p>'}`);
 
     parts.push(`<div id="plan-flags">${planFlags(s, plan)}</div>`);
     parts.push(`
@@ -331,7 +361,7 @@
           <div>Weekly<b class="num" id="sum-weekly">${money(s.weeklyTotal)}</b></div>
           <div>Pots<b class="num" id="sum-pots">${money(s.potsTotal)}</b></div>
         </div>
-        <div class="row between" style="margin-top:8px"><span>Left over</span><b class="num ${s.left < 0 ? 'bad' : 'good'}" id="sum-left">${money(s.left)}</b></div>
+        <div class="row between" style="margin-top:8px"><span>Left over</span><span class="left num ${s.left < 0 ? 'bad' : ''}" id="sum-left">${money(s.left)}</span></div>
       </div>`);
     if (!locked) {
       parts.push(`<button class="full" id="lock-btn" data-action="lock" ${s.left < 0 ? 'disabled' : ''}>${s.left < 0 ? 'Over-allocated: can\'t lock yet' : 'Lock in this plan'}</button>`);
@@ -356,7 +386,7 @@
     set('sum-pots', money(s.potsTotal));
     set('sum-left', money(s.left));
     const left = document.getElementById('sum-left');
-    if (left) left.className = 'num ' + (s.left < 0 ? 'bad' : 'good');
+    if (left) left.className = 'left num ' + (s.left < 0 ? 'bad' : '');
     set('hint-weekly', weeklyHint(s));
     set('plan-flags', planFlags(s, plan));
     const btn = document.getElementById('lock-btn');
@@ -446,15 +476,15 @@
   function viewSubs() {
     const totals = B.subsTotals(state.subs);
     const list = state.subs.map((s, i) => `
-      <div class="item stack">
-        <div class="row">${editInput(`subs.${i}.name`, s.name, 'text', 'class="grow"')}
+      <div class="card colour stack" style="background:${colour(i + 1)}">
+        <div class="row">${monogram(s.name)}${editInput(`subs.${i}.name`, s.name, 'text', 'class="grow"')}
           ${editInput(`subs.${i}.amount`, s.amount, 'num', 'class="money" style="max-width:90px"')}</div>
         <div class="row between">
           <select data-edit="subs.${i}.freq" data-type="text" style="width:auto">${['weekly', 'monthly', 'yearly'].map((f) => `<option ${s.freq === f ? 'selected' : ''}>${f}</option>`).join('')}</select>
           <div class="chips">${['keep', 'review', 'cancel'].map((v) => `<button class="chip ${s.verdict === v ? 'on' : ''}" data-action="verdict" data-i="${i}" data-v="${v}">${v}</button>`).join('')}</div>
           <button class="ghost" data-action="del" data-path="subs.${i}" aria-label="Remove">✕</button>
         </div>
-        <p class="muted small">${money(B.monthlyCost(s))}/month · ${money(B.monthlyCost(s) * 12)}/year${s.from === 'csv' ? ' · found in your statement' : ''}</p>
+        <p class="label">${money(B.monthlyCost(s))}/month · ${money(B.monthlyCost(s) * 12)}/year${s.from === 'csv' ? ' · found in your statement' : ''}</p>
       </div>`).join('');
 
     let importer = `
@@ -482,16 +512,16 @@
     }
 
     return `
-      <h1>Secret subscriptions</h1>
-      <div class="card">
-        <div class="big num">${money(totals.perMonth)}<span class="muted" style="font-size:18px">/month</span></div>
-        <p class="muted">${money(totals.perYear)} a year on ${state.subs.length} subscription${state.subs.length === 1 ? '' : 's'}</p>
-        ${totals.savePerYear ? flagHtml('good', `Cancelling the ones marked <b>cancel</b> saves <b>${money(totals.savePerYear)} a year</b>.`) : ''}
-      </div>
-      <div class="card">
-        <div class="row between"><h2>Your subscriptions</h2><button class="ghost" data-action="add-sub">+ Add</button></div>
-        <div class="list">${list || '<p class="muted">None yet. Add them by hand or find them in a bank statement below.</p>'}</div>
-      </div>
+      <section class="hero">
+        <h1>Secret<br>subscriptions</h1>
+        <div class="hero-num">
+          <span class="label">${money(totals.perYear)} a year<br>${state.subs.length} subscription${state.subs.length === 1 ? '' : 's'}</span>
+          <span class="huge">${bigMoney(totals.perMonth)}<span class="pence" style="font-size:20px">/mo</span></span>
+        </div>
+      </section>
+      ${totals.savePerYear ? flagHtml('good', `Cancelling the ones marked <b>cancel</b> saves <b>${money(totals.savePerYear)} a year</b>.`) : ''}
+      <div class="row between"><h2>Yours</h2><button class="ghost" data-action="add-sub">+ Add</button></div>
+      ${list ? `<div class="stackcards">${list}</div>` : '<div class="card"><p class="muted">None yet. Add them by hand or find them in a bank statement below.</p></div>'}
       <div class="card"><h2>Find them in a statement</h2>${importer}</div>
       <div class="card">
         <h2>Where they hide</h2>
@@ -545,7 +575,7 @@
         ${ui.starter ? '<button class="soft full" data-action="load-starter">Load starter numbers</button>' : ''}
         <button class="ghost full" data-action="reset" style="color:var(--bad)">Wipe everything</button>
       </div>
-      <p class="muted small">Pots is a planner, not financial advice. For investment or debt decisions, MoneyHelper is free and impartial.</p>`;
+      <p class="muted small">Tom Don't Spend is a planner, not financial advice. For investment or debt decisions, MoneyHelper is free and impartial.</p>`;
   }
 
   // ---------- rendering and events ----------
@@ -591,7 +621,7 @@
 
   function importState(obj) {
     if (!obj || typeof obj !== 'object' || !obj.settings || !Array.isArray(obj.accounts)) {
-      toast('That file doesn\'t look like a Pots backup.');
+      toast("That file doesn't look like a Tom Don't Spend backup.");
       return;
     }
     state = Object.assign(emptyState(), obj);
@@ -679,7 +709,7 @@
       const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `pots-backup-${today()}.json`;
+      a.download = `dont-spend-backup-${today()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     },

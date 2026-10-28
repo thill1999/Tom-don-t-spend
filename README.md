@@ -1,4 +1,4 @@
-# Pots: budget tracker
+# Tom Don't Spend
 
 A phone-first money planner. Plain HTML, CSS and JavaScript with no libraries and no build step.
 Your numbers are saved on the device only (browser storage); use **More → Export backup** to keep a copy.

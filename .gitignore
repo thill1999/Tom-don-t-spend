@@ -1,5 +1,6 @@
 # Your real numbers never go in git
 private/
 *.json.bak
-pots-backup-*.json
+dont-spend-backup-*.json
 .DS_Store
+.claude/
